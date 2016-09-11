@@ -1,1 +1,0 @@
-initSidebarItems({"struct":[["Object","A pointer type that owns its content."],["Pool","A fast heap-allocator. Allocates objects in a batch, but transfers the control to the `Object`"]]});
