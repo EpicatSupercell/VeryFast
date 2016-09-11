@@ -1,3 +1,34 @@
+//! A heap allocator that gives ownership of the value like a `Box`, but allocates in batches.
+//!
+//! The `Pool` class creates a pool of memory to allocate objects on. If it runs out, it will
+//! allocate more memory but will not move the old values from their place.
+//!
+//! It gives the option to allocate each object on a separate CPU cache line, increasing performance
+//! of multithreaded algorithms.
+//!
+//! The `Object` class has exclusive ownership of the value contained within. When dropped, the
+//! owned object will be dropped as well. The memory, however, will be returned to the `Pool` it
+//! was allocated from to be available for other allocations.
+//!
+//! #Examples
+//! ```
+//! use veryfast::pool::{Pool, Object};
+//!
+//! let pool = Pool::new(true, 1000);
+//!
+//! let var1 = pool.add(15i32);
+//! let mut var2 = pool.add(7);
+//! *var2 = *var1;
+//! assert_eq!(*var1, *var2);
+//!
+//! let mut vec = Vec::new();
+//! for i in 0..10 {
+//!     vec.push(pool.add(i));
+//! }
+//! for i in &vec {
+//!     print!("{} ", **i);
+//! }
+//! ```
 use std::sync::{Mutex, Arc};
 
 use std::mem;
@@ -9,11 +40,14 @@ use std::marker::PhantomData;
 
 use super::crossbeam::sync::MsQueue;
 
-/// A fast heap-allocator. Allocates objects in a batch, but transfers the control to the
+/// A fast heap-allocator. Allocates objects in a batch, but transfers the control to the `Object`
 pub struct Pool<TYPE> {
     manager: Arc<Manager<TYPE>>,
 }
 
+/// A pointer type that owns its content.
+///
+/// Created from a `Pool`.
 pub struct Object<TYPE> {
     obj: *mut TYPE,
     manager: Arc<Manager<TYPE>>,
@@ -30,11 +64,23 @@ struct Manager<TYPE> {
 }
 
 impl<TYPE> Pool<TYPE> {
+    /// Creates a new `Pool`.
+    ///
+    /// - `align_to_cache`: Should each object be on a separate CPU cache line. Speeds up
+    /// multithreaded usage but requires a bit more memory in most cases.
+    ///
+    /// - `batch`: How many objects should be allocated each time. Higher numbers are faster,
+    /// but can cause wasted memory if too little are actually used.
     #[inline]
     pub fn new(align_to_cache: bool, batch: usize) -> Pool<TYPE> {
         Pool { manager: Arc::new(Manager::new(align_to_cache, batch)) }
     }
 
+    /// Save the object on the heap. Will get a pointer that will drop it's content when
+    /// dropped (like a `Box`). The memory will be reused though!
+    ///
+    /// Thread-safe. Very fast most of the time, but will take a bit longer if need to allocate
+    /// more objects.
     #[inline]
     pub fn add(&self, obj: TYPE) -> Object<TYPE> {
         self.manager.add(obj, self.manager.clone())
@@ -130,7 +176,6 @@ impl<TYPE> Drop for Object<TYPE> {
 impl<TYPE> Deref for Object<TYPE> {
     type Target = TYPE;
 
-    #[allow(inline_always)]
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.obj }
@@ -138,7 +183,6 @@ impl<TYPE> Deref for Object<TYPE> {
 }
 
 impl<TYPE> DerefMut for Object<TYPE> {
-    #[allow(inline_always)]
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *self.obj }
@@ -200,8 +244,8 @@ mod tests {
     #[test]
     fn object_dereference() {
         let val = 5u64;
-        let cache = Cache::new(false, 10);
-        let mut val2 = cache.add(val);
+        let pool = Pool::new(false, 10);
+        let mut val2 = pool.add(val);
         assert_eq!(*val2, val);
         let val3 = 7u64;
         *val2 = val3;

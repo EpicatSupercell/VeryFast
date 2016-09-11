@@ -1,9 +1,11 @@
 [package]
 name = "veryfast"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast Rust and other tools for game development."
 license = "MIT"
 authors = ["Epicat Supercell <epicatsupercell@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/EpicatSupercell/VeryFast"
 
 [lib]
 name = "veryfast"
@@ -11,5 +13,3 @@ path = "src/lib.rs"
 
 [dependencies]
 crossbeam = "^0.2.10"
-
-clippy = "*"

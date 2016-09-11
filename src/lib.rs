@@ -1,37 +1,22 @@
 #![feature(alloc, heap_api)]
 #![feature(arc_counts)]
-#![feature(plugin)]
-#![plugin(clippy)]
+#![deny(missing_docs)]
 
 //! `VeryFast` is a collection of useful tools needed mostly by game developers.
 //! It is designed to work well in multi threaded contexts.
 //!
-//! #Examples
-//! ```
-//! use veryfast::pool::{Pool, Object};
-//!
-//! let pool = Pool::new(true, 1000);
-//!
-//! let var1 = pool.add(15i32);
-//! let mut var2 = pool.add(7);
-//! *var2 = *var1;
-//! assert_eq!(*var1, *var2);
-//!
-//! let mut vec = Vec::new();
-//! for i in 0..10 {
-//!     vec.push(pool.add(i));
-//! }
-//! for i in &vec {
-//!     print!("{} ", **i);
-//! }
-//! ```
+//! At the moment it supplies one useful class - `pool::Pool`, which allocates objects on the heap
+//! like a `Box`, but allocates in batches and reuses the memory instead of deallocating
+//! when Dropped!
 //!
 //! #Nightly Requirements:
-//! Nightly is required for the next features:
+//! Nightly is required because if the next features:
 //!
-//! - `#[feature(alloc)]`: Custom allocation
+//! - `#[feature(alloc)]`: Custom allocation strategy for `Pool`
 //!
-//! - `#[feature(heap_api)]`: Custom allocation
+//! - `#[feature(heap_api)]`: Custom allocation strategy for `Pool`
+//!
+//!
 
 extern crate alloc;
 extern crate crossbeam;
