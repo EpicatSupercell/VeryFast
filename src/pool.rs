@@ -1,32 +1,70 @@
 //! A heap allocator that gives ownership of the value like a `Box`, but allocates in batches.
 //!
-//! The `Pool` class creates a pool of memory to allocate objects on. If it runs out, it will
-//! allocate more memory but will not move the old values from their place.
+//! `Pool` allocates objects on the heap in batches.
+//! All objects must be of the same type like in `Vec`.
+//! It allows fast multithreaded parallel allocation of objects.
+//! If the `Pool` runs out of memory, it will allocate more but will not move the old values
+//! from their place.
+//!
+//! When objects are dropped, their memory is returned to the pool to be reused for
+//! future allocations.
+//! Only when all the objects and the `Pool` are dropped will the memory be released.
 //!
 //! It gives the option to allocate each object on a separate CPU cache line, increasing performance
-//! of multithreaded algorithms.
+//! of multithreaded access to adjacent elements.
 //!
 //! The `Object` class has exclusive ownership of the value contained within. When dropped, the
 //! owned object will be dropped as well. The memory, however, will be returned to the `Pool` it
 //! was allocated from to be available for other allocations.
 //!
-//! #Examples
 //! ```
 //! use veryfast::pool::{Pool, Object};
 //!
-//! let pool = Pool::new(true, 1000);
+//! let pool = Pool::new(false, 1000);
 //!
-//! let var1 = pool.add(15i32);
-//! let mut var2 = pool.add(7);
+//! let var1 = pool.insert(15i32);
+//! let mut var2 = pool.insert(7);
 //! *var2 = *var1;
 //! assert_eq!(*var1, *var2);
 //!
 //! let mut vec = Vec::new();
 //! for i in 0..10 {
-//!     vec.push(pool.add(i));
+//!     vec.push(pool.insert(i));
 //! }
 //! for i in &vec {
 //!     print!("{} ", **i);
+//! }
+//! ```
+//!
+//! An example using a scoped thread pool:
+//!
+//! ```
+//!# extern crate veryfast;
+//! extern crate scoped_threadpool;
+//!
+//! fn slow(val: &mut i32) {
+//!     *val += 1;
+//! }
+//!
+//! let mut thread_pool = scoped_threadpool::Pool::new(4);
+//! let memory_pool = veryfast::pool::Pool::new(true, 1000);
+//!
+//! let mut vec = Vec::new();
+//!
+//! for i in 0..10 {
+//!     vec.push(memory_pool.insert(i));
+//! }
+//!
+//! thread_pool.scoped(|scoped| {
+//!     for e in &mut vec {
+//!         scoped.execute(move || {
+//!             slow(&mut **e);
+//!         });
+//!     }
+//! });
+//!
+//! for i in 0..10 {
+//!     assert_eq!(*vec[i], vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10][i]);
 //! }
 //! ```
 use std::sync::{Mutex, Arc};
@@ -40,14 +78,22 @@ use std::marker::PhantomData;
 
 use super::crossbeam::sync::MsQueue;
 
-/// A fast heap-allocator. Allocates objects in a batch, but transfers the control to the `Object`
+/// A fast heap-allocator. Allocates objects in a batch, but transfers the control to the `Object`.
+///
+/// Allocations will first check if there is an already free slot to use, and use that.
+/// If no, It will take a lock and allocate a batch of memory.
+///
+/// When objects are dropped, their memory will be returned to the pool to be used again later.
+/// The memory of the batches will be deallocated only when the `Pool` and all the related `Object`s
+/// are dropped.
 pub struct Pool<TYPE> {
     manager: Arc<Manager<TYPE>>,
 }
 
 /// A pointer type that owns its content.
 ///
-/// Created from a `Pool`.
+/// Created from a `Pool`. The `Object` owns the value inside it and has exclusive access to it.
+///
 pub struct Object<TYPE> {
     obj: *mut TYPE,
     manager: Arc<Manager<TYPE>>,
@@ -66,13 +112,13 @@ struct Manager<TYPE> {
 impl<TYPE> Pool<TYPE> {
     /// Creates a new `Pool`.
     ///
-    /// - `align_to_cache`: Should each object be on a separate CPU cache line. Speeds up
-    /// multithreaded usage but requires a bit more memory in most cases.
-    ///
     /// - `batch`: How many objects should be allocated each time. Higher numbers are faster,
     /// but can cause wasted memory if too little are actually used.
+    ///
+    /// - `align_to_cache`: Should each object be on a separate CPU cache line. Speeds up
+    /// multithreaded usage but requires a bit more memory in most cases.
     #[inline]
-    pub fn new(align_to_cache: bool, batch: usize) -> Pool<TYPE> {
+    pub fn new(batch: usize, align_to_cache: bool) -> Pool<TYPE> {
         Pool { manager: Arc::new(Manager::new(align_to_cache, batch)) }
     }
 
@@ -82,8 +128,8 @@ impl<TYPE> Pool<TYPE> {
     /// Thread-safe. Very fast most of the time, but will take a bit longer if need to allocate
     /// more objects.
     #[inline]
-    pub fn add(&self, obj: TYPE) -> Object<TYPE> {
-        self.manager.add(obj, self.manager.clone())
+    pub fn insert(&self, obj: TYPE) -> Object<TYPE> {
+        self.manager.insert(obj, self.manager.clone())
     }
 }
 
@@ -125,7 +171,7 @@ impl<TYPE> Manager<TYPE> {
     }
 
     #[inline]
-    pub fn add(&self, obj: TYPE, manager: Arc<Manager<TYPE>>) -> Object<TYPE> {
+    pub fn insert(&self, obj: TYPE, manager: Arc<Manager<TYPE>>) -> Object<TYPE> {
         let slot = match self.free.try_pop() {
             Some(x) => x,
             None => self.expand(),
@@ -245,7 +291,7 @@ mod tests {
     fn object_dereference() {
         let val = 5u64;
         let pool = Pool::new(false, 10);
-        let mut val2 = pool.add(val);
+        let mut val2 = pool.insert(val);
         assert_eq!(*val2, val);
         let val3 = 7u64;
         *val2 = val3;

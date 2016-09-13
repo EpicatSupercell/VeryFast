@@ -1,6 +1,6 @@
 [package]
 name = "veryfast"
-version = "0.1.1"
+version = "0.1.2"
 description = "Fast Rust and other tools for game development."
 license = "MIT"
 authors = ["Epicat Supercell <epicatsupercell@gmail.com>"]
@@ -13,3 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 crossbeam = "^0.2.10"
+
+[dev-dependencies]
+scoped_threadpool = "^0.1.7"

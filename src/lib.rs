@@ -10,13 +10,9 @@
 //! when Dropped!
 //!
 //! #Nightly Requirements:
-//! Nightly is required because if the next features:
+//! Nightly is required because of the next features:
 //!
-//! - `#[feature(alloc)]`: Custom allocation strategy for `Pool`
-//!
-//! - `#[feature(heap_api)]`: Custom allocation strategy for `Pool`
-//!
-//!
+//! - `#[feature(alloc, heap_api)]`: Custom allocation strategy for `Pool`
 
 extern crate alloc;
 extern crate crossbeam;
