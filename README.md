@@ -4,7 +4,7 @@ but fitting anyone who is focused on performance.
 They are focused on speed and multithreaded safety.
 
 At the moment it supplies one useful class - `Pool`, which allocates objects on the heap
-like an `Box`, but allocates in batches and reuses the memory instead of deallocating
+like a `Box`, but allocates in batches and reuses the memory instead of deallocating
 when Dropped! It is similar to `Arena` but allows deallocation.
 
 ###[Documentation](https://docs.rs/veryfast/)

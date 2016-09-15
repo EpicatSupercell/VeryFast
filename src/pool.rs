@@ -17,10 +17,12 @@
 //! owned object will be dropped as well. The memory, however, will be returned to the `Pool` it
 //! was allocated from to be available for other allocations.
 //!
+//! # Examples
+//!
 //! ```
 //! use veryfast::pool::{Pool, Object};
 //!
-//! let pool = Pool::new(false, 1000);
+//! let pool = Pool::new(1000, true);
 //!
 //! let var1 = pool.insert(15i32);
 //! let mut var2 = pool.insert(7);
@@ -39,7 +41,7 @@
 //! An example using a scoped thread pool:
 //!
 //! ```
-//!# extern crate veryfast;
+//! # extern crate veryfast;
 //! extern crate scoped_threadpool;
 //!
 //! fn slow(val: &mut i32) {
@@ -47,7 +49,7 @@
 //! }
 //!
 //! let mut thread_pool = scoped_threadpool::Pool::new(4);
-//! let memory_pool = veryfast::pool::Pool::new(true, 1000);
+//! let memory_pool = veryfast::pool::Pool::new(1000, true);
 //!
 //! let mut vec = Vec::new();
 //!
@@ -67,14 +69,14 @@
 //!     assert_eq!(*vec[i], vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10][i]);
 //! }
 //! ```
-use std::sync::{Mutex, Arc};
 
-use std::mem;
-use std::ptr;
 use alloc::heap;
-use std::ops::{Deref, DerefMut};
 use std::fmt;
 use std::marker::PhantomData;
+use std::mem;
+use std::ops::{Deref, DerefMut};
+use std::ptr;
+use std::sync::{Arc, Mutex};
 
 use super::crossbeam::sync::MsQueue;
 
@@ -86,30 +88,30 @@ use super::crossbeam::sync::MsQueue;
 /// When objects are dropped, their memory will be returned to the pool to be used again later.
 /// The memory of the batches will be deallocated only when the `Pool` and all the related `Object`s
 /// are dropped.
-pub struct Pool<TYPE> {
-    manager: Arc<Manager<TYPE>>,
+pub struct Pool<T> {
+    manager: Arc<Manager<T>>,
 }
 
 /// A pointer type that owns its content.
 ///
 /// Created from a `Pool`. The `Object` owns the value inside it and has exclusive access to it.
 ///
-pub struct Object<TYPE> {
-    obj: *mut TYPE,
-    manager: Arc<Manager<TYPE>>,
-    _marker: PhantomData<TYPE>,
+pub struct Object<T> {
+    obj: *mut T,
+    manager: Arc<Manager<T>>,
+    _marker: PhantomData<T>,
 }
 
-struct Manager<TYPE> {
-    data: Mutex<Vec<*const TYPE>>,
-    free: MsQueue<*mut TYPE>,
+struct Manager<T> {
+    data: Mutex<Vec<*const T>>,
+    free: MsQueue<*mut T>,
     batch: usize,
     align: usize,
     memory_size: usize,
     elem_size: usize,
 }
 
-impl<TYPE> Pool<TYPE> {
+impl<T> Pool<T> {
     /// Creates a new `Pool`.
     ///
     /// - `batch`: How many objects should be allocated each time. Higher numbers are faster,
@@ -118,7 +120,10 @@ impl<TYPE> Pool<TYPE> {
     /// - `align_to_cache`: Should each object be on a separate CPU cache line. Speeds up
     /// multithreaded usage but requires a bit more memory in most cases.
     #[inline]
-    pub fn new(batch: usize, align_to_cache: bool) -> Pool<TYPE> {
+    pub fn new(batch: usize, align_to_cache: bool) -> Pool<T> {
+        assert!(batch != 0, "Pool requested with batch = 0");
+        assert!(mem::size_of::<T>() != 0,
+                "Pool requested with type of size 0");
         Pool { manager: Arc::new(Manager::new(align_to_cache, batch)) }
     }
 
@@ -127,24 +132,26 @@ impl<TYPE> Pool<TYPE> {
     ///
     /// Thread-safe. Very fast most of the time, but will take a bit longer if need to allocate
     /// more objects.
+    ///
+    /// Will panic if out of memory.
     #[inline]
-    pub fn insert(&self, obj: TYPE) -> Object<TYPE> {
+    pub fn insert(&self, obj: T) -> Object<T> {
         self.manager.insert(obj, self.manager.clone())
     }
 }
 
-impl<TYPE> Manager<TYPE> {
+impl<T> Manager<T> {
     #[inline]
-    pub fn new(align_to_cache: bool, batch: usize) -> Manager<TYPE> {
-        let mut align = mem::align_of::<TYPE>();
-        let mut elem_size = mem::size_of::<TYPE>();
+    pub fn new(align_to_cache: bool, batch: usize) -> Manager<T> {
+        let mut align = mem::align_of::<T>();
+        let mut elem_size = mem::size_of::<T>();
         if align_to_cache {
             let cache_line_size = 64;
             align = ((align - 1) / cache_line_size + 1) * cache_line_size;
             elem_size = ((elem_size - 1) / cache_line_size + 1) * cache_line_size;
         }
         let memory_size = elem_size * batch;
-        Manager::<TYPE> {
+        Manager::<T> {
             data: Mutex::new(Vec::new()),
             free: MsQueue::new(),
             batch: batch,
@@ -155,23 +162,27 @@ impl<TYPE> Manager<TYPE> {
     }
 
     #[inline]
-    fn expand(&self) -> *mut TYPE {
+    fn expand(&self) -> *mut T {
         unsafe {
-            let extra = heap::allocate(self.memory_size, self.align) as *mut TYPE;
+            let mut lock = self.data.lock().unwrap();
+            if let Some(x) = self.free.try_pop() {
+                return x;
+            }
+            let extra = heap::allocate(self.memory_size, self.align) as *mut T;
             if extra.is_null() {
                 panic!("out of memory");
             }
             // starting from 1 since index 0 will be returned
             for i in 1..self.batch {
-                self.free.push((extra as usize + i * self.elem_size) as *mut TYPE);
+                self.free.push((extra as usize + i * self.elem_size) as *mut T);
             }
-            self.data.lock().unwrap().push(extra);
+            lock.push(extra);
             extra
         }
     }
 
     #[inline]
-    pub fn insert(&self, obj: TYPE, manager: Arc<Manager<TYPE>>) -> Object<TYPE> {
+    pub fn insert(&self, obj: T, manager: Arc<Manager<T>>) -> Object<T> {
         let slot = match self.free.try_pop() {
             Some(x) => x,
             None => self.expand(),
@@ -187,12 +198,12 @@ impl<TYPE> Manager<TYPE> {
     }
 
     #[inline]
-    pub fn ret_ptr(&self, obj: *mut TYPE) {
+    pub fn ret_ptr(&self, obj: *mut T) {
         self.free.push(obj);
     }
 }
 
-impl<TYPE> Drop for Manager<TYPE> {
+impl<T> Drop for Manager<T> {
     #[inline]
     fn drop(&mut self) {
         let lock = match self.data.lock() {
@@ -207,9 +218,19 @@ impl<TYPE> Drop for Manager<TYPE> {
     }
 }
 
-impl<TYPE> Object<TYPE> {}
+impl<T> Object<T> {
+    /// Returns the owned object from the pool-allocated memory.
+    #[inline]
+    pub fn recover(self) -> T {
+        let ret = unsafe {
+            ptr::read(self.obj)
+        };
+        self.manager.ret_ptr(self.obj);
+        ret
+    }
+}
 
-impl<TYPE> Drop for Object<TYPE> {
+impl<T> Drop for Object<T> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
@@ -219,8 +240,8 @@ impl<TYPE> Drop for Object<TYPE> {
     }
 }
 
-impl<TYPE> Deref for Object<TYPE> {
-    type Target = TYPE;
+impl<T> Deref for Object<T> {
+    type Target = T;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -228,22 +249,22 @@ impl<TYPE> Deref for Object<TYPE> {
     }
 }
 
-impl<TYPE> DerefMut for Object<TYPE> {
+impl<T> DerefMut for Object<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *self.obj }
     }
 }
 
-unsafe impl<TYPE> Send for Object<TYPE> where TYPE: Send {}
+unsafe impl<T: Send> Send for Object<T> {}
 
-unsafe impl<TYPE> Sync for Object<TYPE> where TYPE: Sync {}
+unsafe impl<T: Sync> Sync for Object<T> {}
 
-unsafe impl<TYPE> Send for Manager<TYPE> where TYPE: Send {}
+unsafe impl<T: Send> Send for Manager<T> {}
 
-unsafe impl<TYPE> Sync for Manager<TYPE> where TYPE: Sync {}
+unsafe impl<T: Send> Sync for Manager<T> {}
 
-impl<TYPE> fmt::Debug for Pool<TYPE> {
+impl<T> fmt::Debug for Pool<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f,
                "{} objects in {:?}",
@@ -252,7 +273,7 @@ impl<TYPE> fmt::Debug for Pool<TYPE> {
     }
 }
 
-impl<TYPE> fmt::Debug for Manager<TYPE> {
+impl<T> fmt::Debug for Manager<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let len = {
             self.data.lock().unwrap().len()
@@ -265,23 +286,23 @@ impl<TYPE> fmt::Debug for Manager<TYPE> {
     }
 }
 
-/*impl<TYPE> fmt::Debug for Object<TYPE>
-    where TYPE: fmt::Debug
-{
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (**self).fmt(f)
-    }
-}
-
-impl<TYPE> fmt::Display for Object<TYPE>
-    where TYPE: fmt::Display
-{
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (**self).fmt(f)
-    }
-}*/
+// impl<T> fmt::Debug for Object<T>
+// where T: fmt::Debug
+// {
+// #[inline]
+// fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+// (**self).fmt(f)
+// }
+// }
+//
+// impl<T> fmt::Display for Object<T>
+// where T: fmt::Display
+// {
+// #[inline]
+// fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+// (**self).fmt(f)
+// }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -290,7 +311,7 @@ mod tests {
     #[test]
     fn object_dereference() {
         let val = 5u64;
-        let pool = Pool::new(false, 10);
+        let pool = Pool::new(10, false);
         let mut val2 = pool.insert(val);
         assert_eq!(*val2, val);
         let val3 = 7u64;
