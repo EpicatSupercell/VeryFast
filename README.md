@@ -29,3 +29,18 @@ allocating a new batch. Deallocations also use a lock-free strategy.
 
 The `Pool` is similar to various [`Arena`](https://github.com/SimonSapin/rust-typed-arena) implementations but it
 allows deallocation of elements and reuse of the memory.
+
+## 'SmallBuffer'
+
+Disclaimer: Not yet ready
+
+A small inline-allocated buffer with expansion capabilities. Pushing values can be done done asynchronously.
+Reading values needs exclusive access. Removing values is only possible by draining the whole buffer.
+
+The buffer is built like a linked list. Pushing many values at a time is discouraged. It fits well for cases where the
+usual element count is low, but needs to be robust for the occasional peak.
+
+# Awaited RFCs:
+
+- [#1657 - const-dependent type system](https://github.com/rust-lang/rfcs/pull/1657): High potential for leverage of
+the type system for speed

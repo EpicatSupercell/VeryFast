@@ -99,7 +99,6 @@ pub struct Pool<T> {
 pub struct Object<T> {
     obj: *mut T,
     manager: Arc<Manager<T>>,
-    _marker: PhantomData<T>,
 }
 
 struct Manager<T> {
@@ -193,7 +192,6 @@ impl<T> Manager<T> {
         Object {
             obj: slot,
             manager: manager,
-            _marker: PhantomData,
         }
     }
 

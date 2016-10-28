@@ -9,7 +9,7 @@
 //! like a `Box`, but allocates in batches and reuses the memory instead of deallocating
 //! when Dropped!
 //!
-//! #Nightly Requirements:
+//! ##Nightly Requirements:
 //! Nightly is required because of the next features:
 //!
 //! - `#[feature(alloc, heap_api)]`: Custom allocation strategy for `Pool`
@@ -18,6 +18,8 @@ extern crate alloc;
 extern crate crossbeam;
 
 pub mod pool;
+mod small_buffer;
+// mod tiny_buffer;
 
 // possible future crates
 //
