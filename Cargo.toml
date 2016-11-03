@@ -1,6 +1,6 @@
 [package]
 name = "veryfast"
-version = "0.1.2"
+version = "0.2.0"
 description = "Fast Rust and other tools for game development."
 license = "MIT"
 authors = ["Epicat Supercell <epicatsupercell@gmail.com>"]
