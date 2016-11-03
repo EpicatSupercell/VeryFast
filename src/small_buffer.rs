@@ -1,3 +1,10 @@
+#![allow(mutex_atomic)]
+//! `SmallBuffer` is useful as a buffer for elements that see little usage.
+//! It has a small capacity inline, so a couple messages will not cause it to allocate memory.
+//! If it receives more data than it can store, it will allocate additional memory to handle it.
+//! It will not deallocate any memory, for cases when it's likely an element that has seen a lot of
+//! usage has a higher chance to continue having high usage.
+
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, AtomicPtr, Ordering};
 use std::mem::uninitialized;
@@ -8,6 +15,9 @@ use std::ptr::{read, write, null_mut};
 ///
 /// The buffer is built like a linked list. Pushing many values at a time is discouraged. It fits well for cases where the
 /// usual element count is low, but needs to be robust for the occasional peak.
+///
+/// Note: currently allocates 16 elements at a time. With `RFC #1657 - const-dependent type system`
+/// it will be possible to customize that number.
 pub struct SmallBuffer<T> {
     buf: [T; 16],
     last_free_slot: AtomicUsize,
@@ -16,6 +26,7 @@ pub struct SmallBuffer<T> {
 }
 
 impl<T> SmallBuffer<T> {
+    /// Creates an empty buffer with an initial capacity of 16.
     pub fn new() -> Self {
         let buf = unsafe { uninitialized() };
         SmallBuffer {
@@ -26,6 +37,7 @@ impl<T> SmallBuffer<T> {
         }
     }
 
+    /// Pushes the item asynchronously, allocating more memory if needed.
     pub fn push(&self, item: T) {
         let index = self.last_free_slot.fetch_add(1, Ordering::AcqRel);
         self.insert_at_index(item, index);
@@ -56,7 +68,8 @@ impl<T> SmallBuffer<T> {
         }
     }
 
-    pub fn drain<'a>(&'a mut self) -> Drain<'a, T> {
+    /// Creates a drain iterator. After the iterator is dropped, the buffer is empty.
+    pub fn drain(&mut self) -> Drain<T> {
         let len = self.last_free_slot.load(Ordering::Relaxed);
         Drain {
             sb: self,
@@ -78,6 +91,9 @@ impl<T> Drop for SmallBuffer<T> {
     }
 }
 
+/// A draining iterator. Returns the contained elements one at a time, removing them from the
+/// buffer. If the iterator is dropped, the remaining elements will be dropped and the buffer
+/// returned to an empty state.
 pub struct Drain<'a, T: 'a> {
     sb: &'a mut SmallBuffer<T>,
     next_index: usize,
@@ -110,7 +126,7 @@ impl<'a, T> Iterator for Drain<'a, T> {
 
 impl<'a, T> Drop for Drain<'a, T> {
     fn drop(&mut self) {
-        while let Some(_) = self.next() {}
+        for _ in self {}
     }
 }
 

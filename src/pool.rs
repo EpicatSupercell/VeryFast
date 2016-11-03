@@ -72,7 +72,6 @@
 
 use alloc::heap;
 use std::fmt;
-use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
@@ -241,6 +240,7 @@ impl<T> Drop for Object<T> {
 impl<T> Deref for Object<T> {
     type Target = T;
 
+    #[allow(inline_always)]
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.obj }
@@ -248,6 +248,7 @@ impl<T> Deref for Object<T> {
 }
 
 impl<T> DerefMut for Object<T> {
+    #[allow(inline_always)]
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *self.obj }

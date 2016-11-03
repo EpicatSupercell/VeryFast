@@ -1,6 +1,7 @@
 #![feature(alloc, heap_api)]
 #![feature(arc_counts)]
 #![deny(missing_docs)]
+#![allow(unknown_lints)]
 
 //! `VeryFast` is a collection of useful tools needed mostly by game developers.
 //! It is designed to work well in multi threaded contexts.
@@ -18,7 +19,8 @@ extern crate alloc;
 extern crate crossbeam;
 
 pub mod pool;
-mod small_buffer;
+pub mod small_buffer;
+
 // mod tiny_buffer;
 
 // possible future crates

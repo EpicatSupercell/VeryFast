@@ -30,7 +30,7 @@ allocating a new batch. Deallocations also use a lock-free strategy.
 The `Pool` is similar to various [`Arena`](https://github.com/SimonSapin/rust-typed-arena) implementations but it
 allows deallocation of elements and reuse of the memory.
 
-## 'SmallBuffer'
+## `SmallBuffer`
 
 Disclaimer: Not yet ready
 
