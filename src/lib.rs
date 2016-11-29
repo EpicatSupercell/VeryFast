@@ -1,4 +1,4 @@
-#![deny(missing_docs)]
+//#![deny(missing_docs)]
 #![allow(unknown_lints)]
 
 //! `VeryFast` is a collection of useful tools needed mostly by game developers.
@@ -18,5 +18,5 @@ extern crate crossbeam;
 pub mod pool;
 pub mod small_buffer;
 
-//mod tiny_buffer;
+pub mod tiny_buffer;
 // mod internal;
