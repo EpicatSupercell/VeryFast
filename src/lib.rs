@@ -1,5 +1,3 @@
-#![feature(alloc, heap_api)]
-#![feature(arc_counts)]
 #![deny(missing_docs)]
 #![allow(unknown_lints)]
 
@@ -15,16 +13,10 @@
 //!
 //! - `#[feature(alloc, heap_api)]`: Custom allocation strategy for `Pool`
 
-extern crate alloc;
 extern crate crossbeam;
 
 pub mod pool;
 pub mod small_buffer;
 
-// mod tiny_buffer;
-
-// possible future crates
-//
-// scoped_threadpool = "*"
-// num_cpus = "*"
-// futures = { git = "https://github.com/alexcrichton/futures-rs" }
+//mod tiny_buffer;
+// mod internal;

@@ -44,4 +44,4 @@ usage has a higher chance to continue having high usage.
 # Awaited RFCs:
 
 - [#1657 - const-dependent type system](https://github.com/rust-lang/rfcs/pull/1657): High potential for leverage of
-the type system for speed
+the type system for customisation.
