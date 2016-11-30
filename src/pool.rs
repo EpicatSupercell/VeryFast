@@ -169,7 +169,7 @@ impl<'p, T> Object<'p, T> {
     /// Get access to the associated pool, for example to allocate data on the same pool.
     #[allow(inline_always)]
     #[inline(always)]
-    pub fn pool(obj: &Self) -> &'p Pool<T> {
+    pub fn pool<'a>(obj: &'a Self) -> &'p Pool<T> {
         obj.pool
     }
 }

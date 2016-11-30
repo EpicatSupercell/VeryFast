@@ -84,7 +84,7 @@ impl<'p, T> TinyBuffer<'p, T> {
         }
     }
 
-    pub fn drain(&mut self) -> Drain<'p, T> {
+    pub fn drain<'a>(&'a mut self) -> Drain<'p, T> {
         Drain {
             next: 0,
             left: self.len.load(Relaxed),
@@ -101,7 +101,7 @@ impl<'p, T> TinyLinkedPointer<'p, T> {
         }
     }
 
-    fn get<F>(&self, func: &F) -> &TinyLinkedBuffer<'p, T>
+    fn get<'a, F>(&'a self, func: &F) -> &'a TinyLinkedBuffer<'p, T>
         where F: Fn(TinyLinkedBuffer<'p, T>) -> Object<'p, TinyLinkedBuffer<'p, T>>
     {
         let ptr = self.ptr.load(Relaxed);
@@ -135,7 +135,7 @@ impl<'p, T> TinyLinkedPointer<'p, T> {
         }
     }
 
-    fn steal(&mut self) -> Option<Object<'p, TinyLinkedBuffer<'p, T>>> {
+    fn steal<'a>(&'a mut self) -> Option<Object<'p, TinyLinkedBuffer<'p, T>>> {
         self.ptr.store(null_mut(), Release);
         self.alloc.get_mut().unwrap().take()
     }
