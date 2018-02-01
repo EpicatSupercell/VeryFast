@@ -22,16 +22,16 @@
 //! ```
 //! use veryfast::pool::{Pool, Object};
 //!
-//! let pool = Pool::new(1000, true);
+//! let pool = Pool::new();
 //!
-//! let var1 = pool.insert(15i32);
-//! let mut var2 = pool.insert(7);
+//! let var1 = pool.push(15i32);
+//! let mut var2 = pool.push(7);
 //! *var2 = *var1;
 //! assert_eq!(*var1, *var2);
 //!
 //! let mut vec = Vec::new();
 //! for i in 0..10 {
-//!     vec.push(pool.insert(i));
+//!     vec.push(pool.push(i));
 //! }
 //! for i in &vec {
 //!     print!("{} ", **i);
@@ -49,12 +49,12 @@
 //! }
 //!
 //! let mut thread_pool = scoped_threadpool::Pool::new(4);
-//! let memory_pool = veryfast::pool::Pool::new(1000, true);
+//! let memory_pool = veryfast::pool::Pool::with_params(true);
 //!
 //! let mut vec = Vec::new();
 //!
 //! for i in 0..10 {
-//!     vec.push(memory_pool.insert(i));
+//!     vec.push(memory_pool.push(i));
 //! }
 //!
 //! thread_pool.scoped(|scoped| {
@@ -70,16 +70,16 @@
 //! }
 //! ```
 
-use alloc::heap;
+use std::heap::{Heap, Layout, Alloc};
 use std::fmt;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use super::crossbeam::sync::MsQueue;
 
-/// A fast heap-allocator. Allocates objects in a batch, but transfers the control to the `Object`.
+/// A fast heap-allocator. Allocates objects in a batch, but transfers the ownership to the `Object`.
 ///
 /// Allocations will first check if there is an already free slot to use, and use that.
 /// If no, It will take a lock and allocate a batch of memory.
@@ -88,41 +88,73 @@ use super::crossbeam::sync::MsQueue;
 /// The memory of the batches will be deallocated only when the `Pool` and all the related `Object`s
 /// are dropped.
 pub struct Pool<T> {
-    manager: Arc<Manager<T>>,
+    data: Mutex<Vec<*const T>>,
+    free: MsQueue<*mut T>,
+    layout: Layout,
+    batch: usize,
+    stride: usize,
 }
 
 /// A pointer type that owns its content.
 ///
 /// Created from a `Pool`. The `Object` owns the value inside it and has exclusive access to it.
 ///
-pub struct Object<T> {
+pub struct Object<'active, T: 'active> {
     obj: *mut T,
-    manager: Arc<Manager<T>>,
-}
-
-struct Manager<T> {
-    data: Mutex<Vec<*const T>>,
-    free: MsQueue<*mut T>,
-    batch: usize,
-    align: usize,
-    memory_size: usize,
-    elem_size: usize,
+    manager: &'active Pool<T>,
 }
 
 impl<T> Pool<T> {
     /// Creates a new `Pool`.
-    ///
-    /// - `batch`: How many objects should be allocated each time. Higher numbers are faster,
-    /// but can cause wasted memory if too little are actually used.
+    #[inline]
+    pub fn new() -> Pool<T> {
+        Pool::with_params(false)
+    }
+
+    /// Creates a new `Pool`.
     ///
     /// - `align_to_cache`: Should each object be on a separate CPU cache line. Speeds up
-    /// multithreaded usage but requires a bit more memory in most cases.
+    /// multithreaded usage, but hurts single-threaded cache locality a bit and requires a bit more memory.
+    /// Has no effect if `size_of::<T>` is already a multiple of a cache line size.
     #[inline]
-    pub fn new(batch: usize, align_to_cache: bool) -> Pool<T> {
-        assert!(batch != 0, "Pool requested with batch = 0");
+    pub fn with_params(align_to_cache: bool) -> Pool<T> {
+        Pool::with_system_params(align_to_cache, 64, 64)
+    }
+
+    /// Creates a new `Pool`.
+    ///
+    /// - `align_to_cache`: Should each object be on a separate CPU cache line. Speeds up
+    /// multithreaded usage, but hurts single-threaded cache locality a bit and requires a bit more memory.
+    /// Has no effect if `size_of::<T>` is already a multiple of a cache line size.
+    /// 
+    /// - `cache_line_size`: The size of an L1 cache line on the architecture. Must be a power of 2.
+    /// 
+    /// - `number_of_sets`: The number of [associativity](https://en.wikipedia.org/wiki/CPU_cache#Associativity) sets
+    /// of the target processor. Decides the size of batch allocations.
+    #[inline]
+    pub fn with_system_params(align_to_cache: bool, cache_line_size: usize, number_of_sets: usize) -> Pool<T> {
+        assert!(cache_line_size != 0, "Pool requested with cache_line_size = 0");
+        assert!(number_of_sets != 0, "Pool requested with number_of_sets = 0");
         assert!(mem::size_of::<T>() != 0,
                 "Pool requested with type of size 0");
-        Pool { manager: Arc::new(Manager::new(align_to_cache, batch)) }
+        let batch_alignment = cache_line_size.max(mem::align_of::<T>());
+        let align = ((mem::size_of::<T>() + mem::align_of::<T>() - 1) / mem::align_of::<T>()) * mem::align_of::<T>();
+        let stride = if align_to_cache {
+            ((cache_line_size + align - 1) / cache_line_size) * cache_line_size
+        } else {
+            align
+        };
+        let batch = (number_of_sets * cache_line_size / stride).max(1);
+        let mem_size = batch * stride;
+        println!("DEBUG//Pool: {} batch, {} stride, {} align, {} mem_size", batch, stride, align, mem_size);
+        let layout = Layout::from_size_align(mem_size, batch_alignment).expect("Pool requested with bad system cache parameters");
+        Pool {
+            data: Mutex::new(Vec::new()),
+            free: MsQueue::new(),
+            layout,
+            batch,
+            stride,
+        }
     }
 
     /// Save the object on the heap. Will get a pointer that will drop it's content when
@@ -133,29 +165,17 @@ impl<T> Pool<T> {
     ///
     /// Will panic if out of memory.
     #[inline]
-    pub fn insert(&self, obj: T) -> Object<T> {
-        self.manager.insert(obj, self.manager.clone())
-    }
-}
-
-impl<T> Manager<T> {
-    #[inline]
-    pub fn new(align_to_cache: bool, batch: usize) -> Manager<T> {
-        let mut align = mem::align_of::<T>();
-        let mut elem_size = mem::size_of::<T>();
-        if align_to_cache {
-            let cache_line_size = 64;
-            align = ((align - 1) / cache_line_size + 1) * cache_line_size;
-            elem_size = ((elem_size - 1) / cache_line_size + 1) * cache_line_size;
+    pub fn push(&self, obj: T) -> Object<T> {
+        let slot = match self.free.try_pop() {
+            Some(x) => x,
+            None => self.expand(),
+        };
+        unsafe {
+            ptr::write(slot, obj);
         }
-        let memory_size = elem_size * batch;
-        Manager::<T> {
-            data: Mutex::new(Vec::new()),
-            free: MsQueue::new(),
-            batch: batch,
-            align: align,
-            memory_size: memory_size,
-            elem_size: elem_size,
+        Object {
+            obj: slot,
+            manager: self,
         }
     }
 
@@ -166,13 +186,10 @@ impl<T> Manager<T> {
             if let Some(x) = self.free.try_pop() {
                 return x;
             }
-            let extra = heap::allocate(self.memory_size, self.align) as *mut T;
-            if extra.is_null() {
-                panic!("out of memory");
-            }
+            let extra = Heap::default().alloc(self.layout.clone()).unwrap() as *mut T;
             // starting from 1 since index 0 will be returned
             for i in 1..self.batch {
-                self.free.push((extra as usize + i * self.elem_size) as *mut T);
+                self.free.push((extra as usize + i * self.stride) as *mut T);
             }
             lock.push(extra);
             extra
@@ -180,27 +197,18 @@ impl<T> Manager<T> {
     }
 
     #[inline]
-    pub fn insert(&self, obj: T, manager: Arc<Manager<T>>) -> Object<T> {
-        let slot = match self.free.try_pop() {
-            Some(x) => x,
-            None => self.expand(),
-        };
-        unsafe {
-            ptr::write(slot, obj);
-        }
-        Object {
-            obj: slot,
-            manager: manager,
-        }
-    }
-
-    #[inline]
-    pub fn ret_ptr(&self, obj: *mut T) {
+    fn ret_ptr(&self, obj: *mut T) {
         self.free.push(obj);
     }
 }
 
-impl<T> Drop for Manager<T> {
+impl<T> Default for Pool<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Drop for Pool<T> {
     #[inline]
     fn drop(&mut self) {
         let lock = match self.data.lock() {
@@ -209,35 +217,36 @@ impl<T> Drop for Manager<T> {
         };
         for block in lock.deref() {
             unsafe {
-                heap::deallocate(*block as *mut u8, self.memory_size, self.align);
+                Heap::default().dealloc(*block as *mut u8, self.layout.clone());
             }
         }
     }
 }
 
-impl<T> Object<T> {
+impl<'active, T> Object<'active, T> {
     /// Returns the owned object from the pool-allocated memory.
+    #[allow(needless_pass_by_value)]
     #[inline]
-    pub fn recover(self) -> T {
+    pub fn recover(t: Self) -> T {
         let ret = unsafe {
-            ptr::read(self.obj)
+            ptr::read(t.obj)
         };
-        self.manager.ret_ptr(self.obj);
+        t.manager.ret_ptr(t.obj);
         ret
     }
 }
 
-impl<T> Drop for Object<T> {
+impl<'active, T> Drop for Object<'active, T> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
             ptr::read(self.obj);
         }
-        (*self.manager).ret_ptr(self.obj);
+        self.manager.ret_ptr(self.obj);
     }
 }
 
-impl<T> Deref for Object<T> {
+impl<'active, T> Deref for Object<'active, T> {
     type Target = T;
 
     #[allow(inline_always)]
@@ -247,7 +256,7 @@ impl<T> Deref for Object<T> {
     }
 }
 
-impl<T> DerefMut for Object<T> {
+impl<'active, T> DerefMut for Object<'active, T> {
     #[allow(inline_always)]
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -255,33 +264,27 @@ impl<T> DerefMut for Object<T> {
     }
 }
 
-unsafe impl<T: Send> Send for Object<T> {}
+unsafe impl<'active, T: Send> Send for Object<'active, T> {}
 
-unsafe impl<T: Sync> Sync for Object<T> {}
+unsafe impl<'active, T: Sync> Sync for Object<'active, T> {}
 
-unsafe impl<T: Send> Send for Manager<T> {}
+unsafe impl<T: Send> Send for Pool<T> {}
 
-unsafe impl<T: Send> Sync for Manager<T> {}
+unsafe impl<T: Send> Sync for Pool<T> {}
 
 impl<T> fmt::Debug for Pool<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "{} objects in {:?}",
-               Arc::strong_count(&self.manager) - 1,
-               self.manager)
-    }
-}
-
-impl<T> fmt::Debug for Manager<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let len = {
+        let pages = {
             self.data.lock().unwrap().len()
         };
         write!(f,
-               "{} blocks, {} bytes allocated for {} possible elements",
-               len,
-               self.memory_size * len,
-               self.batch * len)
+               "Pool {{ {} blocks, {} elements with {} stride in each. {} bytes allocated total for {} possible elements }}",
+               pages,
+               self.batch,
+               self.stride,
+               pages * self.layout.size(),
+               pages * self.batch
+               )
     }
 }
 
@@ -310,8 +313,8 @@ mod tests {
     #[test]
     fn object_dereference() {
         let val = 5u64;
-        let pool = Pool::new(10, false);
-        let mut val2 = pool.insert(val);
+        let pool = Pool::with_params(false);
+        let mut val2 = pool.push(val);
         assert_eq!(*val2, val);
         let val3 = 7u64;
         *val2 = val3;

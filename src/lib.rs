@@ -1,4 +1,4 @@
-#![feature(alloc, heap_api)]
+#![feature(allocator_api)]
 #![feature(arc_counts)]
 #![deny(missing_docs)]
 #![allow(unknown_lints)]
@@ -10,12 +10,12 @@
 //! like a `Box`, but allocates in batches and reuses the memory instead of deallocating
 //! when Dropped!
 //!
-//! ##Nightly Requirements:
+//! ## Nightly Requirements:
 //! Nightly is required because of the next features:
 //!
-//! - `#[feature(alloc, heap_api)]`: Custom allocation strategy for `Pool`
+//! - `#![feature(allocator_api)]`: Custom allocation strategy for `Pool`
 
-extern crate alloc;
+
 extern crate crossbeam;
 
 pub mod pool;

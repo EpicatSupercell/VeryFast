@@ -16,7 +16,7 @@ use std::ptr::{read, write, null_mut};
 /// The buffer is built like a linked list. Pushing many values at a time is discouraged. It fits well for cases where the
 /// usual element count is low, but needs to be robust for the occasional peak.
 ///
-/// Note: currently allocates 16 elements at a time. With `RFC #1657 - const-dependent type system`
+/// Note: currently allocates 16 elements at a time. With `RFC #2000 - Const generics`
 /// it will be possible to customize that number.
 pub struct SmallBuffer<T> {
     buf: [T; 16],

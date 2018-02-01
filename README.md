@@ -1,3 +1,14 @@
+# Status Update
+Progress is blocked by missing features of rust.
+
+- [Const generics](https://github.com/rust-lang/rust/issues/44580): Specifying the buffer size for both
+`Pool` and `SmallBuffer` is impossible without it. For now a default has been set, but might not fit every use.
+
+## Nightly Requirements:
+Nightly is required because of the next features:
+
+- `#![feature(allocator_api)]`: Custom alignment for `Pool` allocations
+
 # VeryFast
 `VeryFast` is a collection of useful tools needed mostly by game developers,
 but fitting anyone who is focused on performance.
@@ -7,12 +18,7 @@ At the moment it supplies one useful class - `Pool`, which allocates objects on 
 like a `Box`, but allocates in batches and reuses the memory instead of deallocating
 when Dropped! It is similar to `Arena` but allows deallocation.
 
-###[Documentation](https://docs.rs/veryfast/)
-
-##Nightly Requirements:
-Nightly is required because of the next features:
-
-- `#[feature(alloc, heap_api)]`: Custom allocation strategy for `Pool`
+### [Documentation](https://docs.rs/veryfast/)
 
 # Tools
 
@@ -40,8 +46,3 @@ It has a small capacity inline, so a couple messages will not cause it to alloca
 If it receives more data than it can store, it will allocate additional memory to handle it.
 It will not deallocate any memory, for cases when it's likely an element that has seen a lot of
 usage has a higher chance to continue having high usage.
-
-# Awaited RFCs:
-
-- [#1657 - const-dependent type system](https://github.com/rust-lang/rfcs/pull/1657): High potential for leverage of
-the type system for speed
