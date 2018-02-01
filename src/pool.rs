@@ -146,7 +146,6 @@ impl<T> Pool<T> {
         };
         let batch = (number_of_sets * cache_line_size / stride).max(1);
         let mem_size = batch * stride;
-        println!("DEBUG//Pool: {} batch, {} stride, {} align, {} mem_size", batch, stride, align, mem_size);
         let layout = Layout::from_size_align(mem_size, batch_alignment).expect("Pool requested with bad system cache parameters");
         Pool {
             data: Mutex::new(Vec::new()),
